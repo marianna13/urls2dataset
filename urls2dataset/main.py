@@ -34,6 +34,8 @@ def urls2dataset(
     subjob_size: int = 1000,
     max_shard_retry: int = 1,
     config={},
+    postprocess_func=None,
+    filters_config={},
 ):
     """
     extract text from webpage links
@@ -103,6 +105,8 @@ def urls2dataset(
         tmp_dir=tmp_dir,
         config=config,
         common_crawl=input_format == "cc",
+        postprocess_func=postprocess_func,
+        filters_config=filters_config,
     )
 
     distributor_fn = multiprocessing_distributor

@@ -4,16 +4,17 @@ import requests
 import io
 from resiliparse.parse.html import HTMLTree
 from resiliparse.extract.html2text import extract_plain_text
-from resiliparse.parse import detect_encoding
+from resiliparse.parse import detect_encoding, bytes_to_str
 import hashlib
 from urllib.parse import urljoin, urlparse
-
+import time
+from ftlangdetect import detect
 
 _HEADERS = {
     "accept": "*/*",
     "accept-language": "en-US,en;q=0.9",
     "cache-control": "max-age=0",
-    "referer": "https://www.google.comt",
+    "referer": "https://www.google.com",
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36",
 }
 _HEADERS = {}
@@ -133,13 +134,15 @@ class CCDownloader:
     def __init__(self, config):
         self.config = config
 
-    def __call__(self, html_bytes):
-        text = None
+    def __call__(self, data):
+        html, url = data
+        text, media, lang = None, None, None
         try:
             if self.config.get("media_elems"):
-                encoding = detect_encoding(html_bytes)
-                tree = HTMLTree.parse_from_bytes(html_bytes, encoding)
+                tree = HTMLTree.parse(html)
                 tree, media = parser_bytes(url, tree)
+                lang = tree.document.query_selector("html").getattr("lang")
+
             if self.config.get("save_media_struct"):
                 text = extract_plain_text(
                     tree,
@@ -152,12 +155,17 @@ class CCDownloader:
                     noscript=False,
                 )
             else:
-                text = extract_plain_text(html_bytes.decode())
+                text = extract_plain_text(html)
             error = None
+            if lang is None:
+                # lang = detector.detect_language_of(text[:250])
+                lang = detect(text[:100], low_memory=True)["lang"]
+            lang = str(lang).replace("Language.", "")
+            media["language"] = lang
 
         except Exception as err:
-            # print(err)
             error = str(err)
+        return text, media, error
 
 
 class URLDownloader:
@@ -179,6 +187,10 @@ class URLDownloader:
                 if self.config.get("media_elems"):
                     encoding = detect_encoding(html_bytes)
                     tree = HTMLTree.parse_from_bytes(html_bytes, encoding)
+                    lang = tree.document.query_selector("html").getattr("lang")
+                    if lang is None:
+                        lang = detector.detect_language_of(text)
+                    media["language"] = lang
                     tree, media = parser_bytes(url, tree)
                 if self.config.get("save_media_struct"):
                     text = extract_plain_text(
@@ -196,7 +208,7 @@ class URLDownloader:
                 error = None
 
         except Exception as err:
-            # print(err)
+            print(err)
             error = str(err)
 
         return text, media, error
@@ -215,5 +227,4 @@ class DataReader:
         key, url = row
 
         text, media, error_message = self.downloader(url)
-
         return key, text, media, error_message

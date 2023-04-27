@@ -9,6 +9,10 @@ import pyarrow.csv as csv_pq
 import pyarrow as pa
 import pandas as pd
 from fastwarc import ArchiveIterator
+import fsspec
+import io
+from resiliparse.parse import detect_encoding, bytes_to_str
+import time
 
 
 class InputSharder:
@@ -45,10 +49,14 @@ class InputSharder:
         self.number_sample_per_shard = number_sample_per_shard
         self.done_shards = done_shards
         self.shard_sampler = sampler
-
-        fs, url_path = fsspec.core.url_to_fs(url_list)
-        self.fs = fs
         self.tmp_path = tmp_path
+
+        if self.input_format != "cc":
+            fs, url_path = fsspec.core.url_to_fs(url_list)
+            self.fs = fs
+            self.tmp_path = tmp_path
+        else:
+            url_path = url_list
 
         if self.input_format != "cc" and fs.isdir(url_path):
             self.input_files = sorted(fs.glob(url_path + "/*." + input_format))
@@ -57,16 +65,13 @@ class InputSharder:
         else:
             self.input_files = [url_path]
 
-        if self.input_format == "txt":
+        if self.input_format in ["txt", "cc"]:
             self.column_list = ["url"]
         elif self.input_format in ["json", "csv", "tsv", "tsv.gz", "parquet"]:
             self.column_list = self.save_additional_columns if self.save_additional_columns is not None else []
             self.column_list = (
                 self.column_list + ["clips"] * bool(self.clip_col) + ["caption"] * bool(self.caption_col) + ["url"]
             )
-        elif self.input_format == "cc":
-            self.column_list = ["html"]
-            self.url_col = "html"
         else:
             raise ValueError(f"Invalid input format {self.input_format}")
 
@@ -99,16 +104,22 @@ class InputSharder:
                 df = pq.read_table(file, columns=columns_to_read)
 
         elif self.input_format == "cc":
-            schema = pa.schema(
-                {
-                    "html": pa.binary(),
-                }
-            )
+            schema = pa.schema({"url": pa.string()})
 
             html = []
-            print(schema)
-            with self.fs.open(input_file, "rb") as file:
-                for record in ArchiveIterator(file, max_content_length=4 * 1024**2):
+            with fsspec.open(input_file, mode="rb", compression="gzip") as f:
+
+                for i in range(10):
+                    try:
+                        print(i)
+                        tf = io.BytesIO(f.read())
+                        break
+                    except Exception as ex:  # pylint: disable=broad-except
+                        if i == 9:
+                            time.sleep(i * 2)
+                            logger.info("failed 10 times, skipping ", path)
+                    return
+                for record in ArchiveIterator(tf, max_content_length=4 * 1024**2):
                     try:
                         if record.headers is None:
                             continue
@@ -118,13 +129,18 @@ class InputSharder:
                             content_type = str(record.http_content_type).lower()
 
                             if content_type.startswith("text/html"):
-                                html.append(record.reader.read())
-                                # print(len(html))
+                                h = record.reader.read()
+                                encoding = detect_encoding(h)
+                                h = bytes_to_str(h, encoding)
+                                url = str(record.headers["WARC-Target-URI"])
+                                html.append((h, url))
 
                     except Exception as err:
                         print(err)
                         continue
-            df = pa.Table.from_pydict(dict(zip(schema.names, (html))), schema=schema)
+
+            df = pa.Table.from_pydict({"url": html})
+
             del html
         else:
             raise ValueError(f"Unknown input format {self.input_format}")

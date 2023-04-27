@@ -15,6 +15,8 @@ import numpy as np
 from .data_reader import DataReader
 from .logger import CappedCounter
 from .logger import write_stats
+from .subsamplers import Subsampler
+from .filters import Filter
 
 
 def compute_key(key, shard_id, oom_sample_per_shard, oom_shard_count):
@@ -24,9 +26,6 @@ def compute_key(key, shard_id, oom_sample_per_shard, oom_shard_count):
         key_format=key_format, true_key=true_key
     )
     return str_key
-
-
-# def cc_loader():
 
 
 class DownloadWorker:
@@ -44,7 +43,9 @@ class DownloadWorker:
         oom_shard_count,
         tmp_dir,
         config,
-        common_crawl=False,
+        postprocess_func,
+        common_crawl,
+        filters_config,
     ) -> None:
         self.sample_writer_class = sample_writer_class
         self.save_caption = save_caption
@@ -55,10 +56,9 @@ class DownloadWorker:
         self.thread_count = thread_count
         self.common_crawl = common_crawl
         self.config = config
-
+        self.postprocess_func = postprocess_func
+        self.filters_config = filters_config
         self.data_reader = DataReader(timeout, tmp_dir=tmp_dir, config=config, common_crawl=common_crawl)
-
-        # self.subsamplers = {"video": video_subsamplers, "audio": audio_subsamplers}
 
     def __call__(
         self,
@@ -93,6 +93,9 @@ class DownloadWorker:
 
         if self.config.get("media_elems"):
             schema = schema.append(pa.field("media", pa.binary()))
+        if self.postprocess_func is not None:
+            schema = schema.append(pa.field("postproc_value", pa.binary()))
+        schema = schema.append(pa.field("language", pa.string()))
 
         pydict = df.select(self.column_list).to_pydict()
         shard_to_dl = list(enumerate(zip(*(pydict[col] for col in self.column_list))))
@@ -117,10 +120,16 @@ class DownloadWorker:
 
         def data_generator():
             for e in key_url_list:
-                semaphore.acquire()  # pylint: disable=(consider-using-with)
+                # semaphore.acquire()  # pylint: disable=(consider-using-with)
                 yield e
 
         loader = data_generator()
+
+        subsampler = Subsampler(func=self.postprocess_func)
+        try:
+            _filter = Filter(**self.filters_config)
+        except:
+            _filter = lambda x: x
 
         # give schema to writer
         sample_writer = self.sample_writer_class(
@@ -147,7 +156,6 @@ class DownloadWorker:
                         "status": None,
                         "error_message": error_message,
                     }
-
                     if error_message is not None:
 
                         failed_to_download += 1
@@ -162,6 +170,13 @@ class DownloadWorker:
                         )
                         semaphore.release()
                         continue
+
+                    if self.postprocess_func is not None:
+                        value, error_message = subsampler(texts)
+                        if error_message is None:
+                            meta["postproc_value"] = value
+                        else:
+                            meta["postproc_value"] = None
 
                     bytes_downloaded += len(texts)
 
@@ -180,7 +195,12 @@ class DownloadWorker:
                     #         caption,
                     #         meta,
                     #     )
-                    #     continue
+                    # continue
+                    sample = {**meta, "text": texts}
+                    if not _filter(sample):
+                        continue
+
+                    del sample
 
                     successes += 1
                     status = "success"
