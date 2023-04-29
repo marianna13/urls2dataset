@@ -13,6 +13,7 @@ import fsspec
 import io
 from resiliparse.parse import detect_encoding, bytes_to_str
 import time
+import uuid
 
 
 class InputSharder:
@@ -104,14 +105,12 @@ class InputSharder:
                 df = pq.read_table(file, columns=columns_to_read)
 
         elif self.input_format == "cc":
-            schema = pa.schema({"url": pa.string()})
 
             html = []
             with fsspec.open(input_file, mode="rb", compression="gzip") as f:
 
                 for i in range(10):
                     try:
-                        print(i)
                         tf = io.BytesIO(f.read())
                         break
                     except Exception as ex:  # pylint: disable=broad-except
@@ -133,7 +132,7 @@ class InputSharder:
                                 encoding = detect_encoding(h)
                                 h = bytes_to_str(h, encoding)
                                 url = str(record.headers["WARC-Target-URI"])
-                                html.append((h, url))
+                                html.append(str((h, url)))
 
                     except Exception as err:
                         print(err)
@@ -170,16 +169,19 @@ class InputSharder:
             begin_shard = shard_id * self.number_sample_per_shard
             end_shard = min(number_samples, (1 + shard_id) * self.number_sample_per_shard)
             df_shard = df.slice(begin_shard, end_shard - begin_shard).select(self.column_list)
-            tmp_file = self.tmp_path + f"/{full_shard_id}.feather"
+            tmp_file = self.tmp_path + f"/{full_shard_id}_{uuid.uuid4()}.feather"
             for i in range(10):
                 try:
                     fs, tmp_path = fsspec.core.url_to_fs(tmp_file)
+    
                     with fs.open(tmp_path, "wb") as file:
                         with pa.ipc.new_file(file, df_shard.schema) as writer:
                             writer.write_table(df_shard)
+                       
                     return (full_shard_id, tmp_file)
                 except Exception as e:  # pylint: disable=broad-except
                     if i != 9:
+                        print(e)
                         print("retrying to write to file due to error:", e)
                         time.sleep(1)
                     else:

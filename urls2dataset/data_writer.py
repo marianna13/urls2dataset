@@ -9,7 +9,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import webdataset as wds
 import json
-from riverbed.kenlm_manager import *
+import ast
 
 
 class BufferedParquetWriter:
@@ -89,9 +89,12 @@ class ParquetSampleWriter:
             sample["language"] = media.pop("language")
             sample["media"] = json.dumps(media, indent=2).encode("utf-8")
 
-        print(type(meta["url"]))
-        if isinstance(meta["url"], list):  # CC returns (HTML, URL)
-            meta["url"] = meta["url"][1]
+        url = ast.literal_eval(meta["url"])
+
+        if isinstance(url, tuple):  # CC returns (HTML, URL)
+            url = url[1]
+    
+        meta["url"] = url
 
         sample.update(meta)
         if type(text) == str:

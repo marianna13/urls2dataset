@@ -28,6 +28,20 @@ def compute_key(key, shard_id, oom_sample_per_shard, oom_shard_count):
     return str_key
 
 
+class TextCleaner:
+    def __init__(self):
+        from pii_transform.api.e2e.multilang import MultiPiiTextProcessor
+        configfile ='piisa-config.yml'
+        self.proc = MultiPiiTextProcessor(lang=["en", "es", "de", 'fr', "ru", "zh", "po", "pt", "it", "no", "ua", "hi", "se", "ne", "tr", "ar", 'jp', "ko"], config=configfile, 
+                            keep_piic=False, debug=None)
+    def __call__(self, text, lang):
+        try:
+            cleaned_text = self.proc(text, lang)
+        except:
+            cleaned_text = text
+        return cleaned_text
+
+
 class DownloadWorker:
     """The downloader class gets calls with shards, download them then call the writer to write them down"""
 
@@ -46,6 +60,7 @@ class DownloadWorker:
         postprocess_func,
         common_crawl,
         filters_config,
+        clean_text
     ) -> None:
         self.sample_writer_class = sample_writer_class
         self.save_caption = save_caption
@@ -59,6 +74,10 @@ class DownloadWorker:
         self.postprocess_func = postprocess_func
         self.filters_config = filters_config
         self.data_reader = DataReader(timeout, tmp_dir=tmp_dir, config=config, common_crawl=common_crawl)
+        self.clean_text = clean_text
+        if clean_text:
+            self.proc_text = TextCleaner()
+
 
     def __call__(
         self,
@@ -207,6 +226,9 @@ class DownloadWorker:
                     status_dict.increment(status)
 
                     meta["status"] = status
+
+                    if self.clean_text:
+                        texts = self.proc_text(texts, lang=media['language'])
 
                     text_caption = sample_data[caption_indice] if caption_indice is not None else None
                     sample_writer.write(

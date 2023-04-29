@@ -9,6 +9,7 @@ import hashlib
 from urllib.parse import urljoin, urlparse
 import time
 from ftlangdetect import detect
+import ast
 
 _HEADERS = {
     "accept": "*/*",
@@ -135,7 +136,7 @@ class CCDownloader:
         self.config = config
 
     def __call__(self, data):
-        html, url = data
+        html, url = ast.literal_eval(data)
         text, media, lang = None, None, None
         try:
             if self.config.get("media_elems"):
@@ -158,7 +159,6 @@ class CCDownloader:
                 text = extract_plain_text(html)
             error = None
             if lang is None:
-                # lang = detector.detect_language_of(text[:250])
                 lang = detect(text[:100], low_memory=True)["lang"]
             lang = str(lang).replace("Language.", "")
             media["language"] = lang
