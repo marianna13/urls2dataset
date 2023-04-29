@@ -1,9 +1,14 @@
 fsspec
 pandas
 pyarrow
-requests
 resiliparse
 wandb
 webdataset
 requests
 aiohttp
+fsspec
+fasttext-langdetect
+git+https://github.com/marianna13/pii-data.git
+git+https://github.com/marianna13/pii-transform.git
+pii-extract-plg-regex
+pii-extract-plg-presidio
