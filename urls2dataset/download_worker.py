@@ -146,9 +146,9 @@ class DownloadWorker:
 
         subsampler = Subsampler(func=self.postprocess_func)
         try:
-            _filter = Filter(**self.filters_config)
+            _filters = [Filter(**fc) for fc in self.filters_config]
         except:
-            _filter = lambda x: x
+            _filters = [lambda x: True]
 
         # give schema to writer
         sample_writer = self.sample_writer_class(
@@ -200,26 +200,10 @@ class DownloadWorker:
                     bytes_downloaded += len(texts)
 
                     metas = [meta]
-
-                    # if error_message is not None:
-                    #     failed_to_subsample += 1
-                    #     status = "failed_to_subsample"
-                    #     status_dict.increment(error_message)
-                    #     meta["status"] = status
-                    #     meta["error_message"] = error_message
-
-                    #     sample_writer.write(
-                    #         {},
-                    #         key,
-                    #         caption,
-                    #         meta,
-                    #     )
-                    # continue
                     sample = {**meta, "text": texts}
-                    if not _filter(sample):
-                        continue
-
-                    del sample
+                    for _filter in _filters:
+                        if _filter(sample):
+                            continue
 
                     successes += 1
                     status = "success"
